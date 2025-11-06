@@ -1063,16 +1063,16 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (!is_ksu_domain()) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    send_sig(SIGKILL, current, 0);
+                    kill_pgrp(SIGKILL, current, 0);
                     return 0;
                 }
             }
             // disallow appuid decrease to any other uid if it is allowed to su
             if (is_appuid(old_uid)) {
-                if (new_uid.val < old_uid.val && ksu_is_allow_uid_for_current(old_uid.val)) {
+                if (new_uid.val < old_uid.val && !ksu_is_allow_uid_for_current(old_uid.val)) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    send_sig(SIGKILL, current, 0);
+                    kill_pgrp(SIGKILL, current, 0);
                     return 0;
                 }
             }
@@ -1223,16 +1223,16 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (!is_ksu_domain()) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    send_sig(SIGKILL, current, 0);
+                    kill_pgrp(SIGKILL, current, 0);
                     return 0;
                 }
             }
             // disallow appuid decrease to any other uid if it is allowed to su
             if (is_appuid(old_uid)) {
-                if (new_uid.val < old_uid.val && ksu_is_allow_uid_for_current(old_uid.val)) {
+                if (new_uid.val < old_uid.val && !ksu_is_allow_uid_for_current(old_uid.val)) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    send_sig(SIGKILL, current, 0);
+                    kill_pgrp(SIGKILL, current, 0);
                     return 0;
                 }
             }
@@ -1689,6 +1689,9 @@ void __init ksu_core_init(void)
     if (ksu_register_feature_handler(&kernel_umount_handler)) {
         pr_err("Failed to register umount feature handler\n");
     }
+    if (ksu_register_feature_handler(&enhanced_security_handler)) {
+        pr_err("Failed to register enhanced security feature handler\n");
+    }
 }
 
 void ksu_core_exit(void)
@@ -1704,4 +1707,5 @@ void ksu_core_exit(void)
     ksu_kprobe_exit();
 #endif
     ksu_unregister_feature_handler(KSU_FEATURE_KERNEL_UMOUNT);
+    ksu_unregister_feature_handler(KSU_FEATURE_ENHANCED_SECURITY);
 }
