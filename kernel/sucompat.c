@@ -18,6 +18,7 @@
 #else
 #include <linux/sched.h>
 #endif
+#include <linux/spinlock.h>
 #include <asm/syscall.h>
 #include <trace/events/syscalls.h>
 #ifdef CONFIG_KSU_SUSFS_SUS_SU
@@ -257,12 +258,6 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
     return 0;
 }
 
-int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-            void *envp, int *flags)
-{
-    return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp, flags);
-}
-
 // the call from execve_handler_pre won't provided correct value for __never_use_argument, use them after fix execve_handler_pre, keeping them for consistence for manually patched code
 int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
                  void *__never_use_argv, void *__never_use_envp,
@@ -314,6 +309,12 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
     escape_to_root();
 
     return 0;
+}
+
+int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+            void *envp, int *flags)
+{
+    return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp, flags);
 }
 
 int ksu_handle_execve_sucompat(int *fd, const char __user **filename_user,
@@ -375,12 +376,6 @@ int ksu_handle_execve_sucompat(int *fd, const char __user **filename_user,
     return 0;
 }
 
-// dummified
-int ksu_handle_devpts(struct inode *inode)
-{
-    return 0;
-}
-
 int __ksu_handle_devpts(struct inode *inode)
 {
 
@@ -408,8 +403,8 @@ int __ksu_handle_devpts(struct inode *inode)
         struct inode_security_struct *sec =
             (struct inode_security_struct *)inode->i_security;
 #endif
-    if (ksu_devpts_sid && sec)
-        sec->sid = ksu_devpts_sid;
+    if (ksu_file_sid && sec)
+        sec->sid = ksu_file_sid;
 
     return 0;
 }
@@ -451,62 +446,51 @@ static void sucompat_sys_enter_handler(void *data, struct pt_regs *regs,
 
 #endif // KSU_HAVE_SYSCALL_TRACEPOINTS_HOOK
 
-#ifdef KSU_KPROBES_HOOK
+#ifdef CONFIG_KRETPROBES
 
-static int pts_unix98_lookup_pre(struct kprobe *p, struct pt_regs *regs)
+static struct kretprobe *init_kretprobe(const char *name,
+                                        kretprobe_handler_t handler)
 {
-    struct inode *inode;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
-    struct file *file = (struct file *)PT_REGS_PARM2(regs);
-    inode = file->f_path.dentry->d_inode;
-#else
-    inode = (struct inode *)PT_REGS_PARM2(regs);
-#endif
-
-    return ksu_handle_devpts(inode);
-}
-
-static struct kprobe *init_kprobe(const char *name,
-                                  kprobe_pre_handler_t handler)
-{
-    struct kprobe *kp = kzalloc(sizeof(struct kprobe), GFP_KERNEL);
-    if (!kp)
+    struct kretprobe *rp = kzalloc(sizeof(struct kretprobe), GFP_KERNEL);
+    if (!rp)
         return NULL;
-    kp->symbol_name = name;
-    kp->pre_handler = handler;
+    rp->kp.symbol_name = name;
+    rp->handler = handler;
+    rp->data_size = 0;
+    rp->maxactive = 0;
 
-    int ret = register_kprobe(kp);
-    pr_info("sucompat: register_%s kprobe: %d\n", name, ret);
+    int ret = register_kretprobe(rp);
+    pr_info("sucompat: register_%s kretprobe: %d\n", name, ret);
     if (ret) {
-        kfree(kp);
+        kfree(rp);
         return NULL;
     }
 
-    return kp;
+    return rp;
 }
 
-static void destroy_kprobe(struct kprobe **kp_ptr)
+static void destroy_kretprobe(struct kretprobe **rp_ptr)
 {
-    struct kprobe *kp = *kp_ptr;
-    if (!kp)
+    struct kretprobe *rp = *rp_ptr;
+    if (!rp)
         return;
-    unregister_kprobe(kp);
+    unregister_kretprobe(rp);
     synchronize_rcu();
-    kfree(kp);
-    *kp_ptr = NULL;
+    kfree(rp);
+    *rp_ptr = NULL;
 }
 
-static struct kprobe *pts_kp = NULL;
 #endif
 
 #ifdef CONFIG_KRETPROBES
 
 static int tracepoint_reg_count = 0;
-static DEFINE_MUTEX(tracepoint_reg_mutex);
+static DEFINE_SPINLOCK(tracepoint_reg_lock);
 
 static int syscall_regfunc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    mutex_lock(&tracepoint_reg_mutex);
+    unsigned long flags;
+    spin_lock_irqsave(&tracepoint_reg_lock, flags);
     if (tracepoint_reg_count < 1) {
         // while install our tracepoint, mark our processes
         unmark_all_process();
@@ -516,13 +500,14 @@ static int syscall_regfunc_handler(struct kretprobe_instance *ri, struct pt_regs
         mark_all_process();
     }
     tracepoint_reg_count++;
-    mutex_unlock(&tracepoint_reg_mutex);
+    spin_unlock_irqrestore(&tracepoint_reg_lock, flags);
     return 0;
 }
 
 static int syscall_unregfunc_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-    mutex_lock(&tracepoint_reg_mutex);
+    unsigned long flags;
+    spin_lock_irqsave(&tracepoint_reg_lock, flags);
     if (tracepoint_reg_count <= 1) {
         // while uninstall our tracepoint, unmark all processes
         unmark_all_process();
@@ -532,25 +517,12 @@ static int syscall_unregfunc_handler(struct kretprobe_instance *ri, struct pt_re
         ksu_mark_running_process();
     }
     tracepoint_reg_count--;
-    mutex_unlock(&tracepoint_reg_mutex);
+    spin_unlock_irqrestore(&tracepoint_reg_lock, flags);
     return 0;
 }
 
-struct kretprobe syscall_regfunc_rp = {
-    .kp.symbol_name = "syscall_regfunc",
-    .handler = syscall_regfunc_handler,
-    .entry_handler = NULL,
-    .data_size = 0,
-    .maxactive = 0,
-};
-
-struct kretprobe syscall_unregfunc_rp = {
-    .kp.symbol_name = "syscall_unregfunc",
-    .handler = syscall_unregfunc_handler,
-    .entry_handler = NULL,
-    .data_size = 0,
-    .maxactive = 0,
-};
+static struct kretprobe *syscall_regfunc_rp = NULL;
+static struct kretprobe *syscall_unregfunc_rp = NULL;
 #endif
 
 void ksu_sucompat_enable()
@@ -558,28 +530,14 @@ void ksu_sucompat_enable()
     int ret;
     pr_info("sucompat: ksu_sucompat_enable called\n");
 
-#ifdef KSU_KPROBES_HOOK
-    // Register kprobe for pts_unix98_lookup
-    pts_kp = init_kprobe("pts_unix98_lookup", pts_unix98_lookup_pre);
-#endif
-
 #ifdef CONFIG_KRETPROBES
-    ret = register_kretprobe(&syscall_regfunc_rp);
-    if (ret) {
-        pr_err("sucompat: failed to register syscall_regfunc kretprobe: %d\n", ret);
-    } else {
-        pr_info("sucompat: syscall_regfunc kretprobe registered\n");
-    }
-    ret = register_kretprobe(&syscall_unregfunc_rp);
-    if (ret) {
-        pr_err("sucompat: failed to register syscall_unregfunc kretprobe: %d\n", ret);
-    } else {
-        pr_info("sucompat: syscall_unregfunc kretprobe registered\n");
-    }
+    // Register kretprobe for syscall_regfunc
+    syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
+    // Register kretprobe for syscall_unregfunc
+    syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
 #endif
 
 #ifdef KSU_HAVE_SYSCALL_TRACEPOINTS_HOOK
-    // Register sys_enter tracepoint for syscall interception
     ret = register_trace_sys_enter(sucompat_sys_enter_handler, NULL);
 #ifndef CONFIG_KRETPROBES
     unmark_all_process();
@@ -600,7 +558,6 @@ void ksu_sucompat_disable()
 {
     pr_info("sucompat: ksu_sucompat_disable called\n");
 #ifdef KSU_HAVE_SYSCALL_TRACEPOINTS_HOOK
-    // Unregister sys_enter tracepoint
     unregister_trace_sys_enter(sucompat_sys_enter_handler, NULL);
     tracepoint_synchronize_unregister();
     pr_info("sucompat: sys_enter tracepoint unregistered\n");
@@ -610,18 +567,10 @@ void ksu_sucompat_disable()
 #endif
 
 #ifdef CONFIG_KRETPROBES
-    // Unregister syscall_regfunc kretprobe
-    unregister_kretprobe(&syscall_regfunc_rp);
-    pr_info("sucompat: syscall_regfunc kretprobe unregistered\n");
-    // Unregister syscall_unregfunc kretprobe
-    unregister_kretprobe(&syscall_unregfunc_rp);
-    pr_info("sucompat: syscall_unregfunc kretprobe unregistered\n");
+    destroy_kretprobe(&syscall_regfunc_rp);
+    destroy_kretprobe(&syscall_unregfunc_rp);
 #endif
 
-#ifdef KSU_KPROBES_HOOK
-    // Unregister pts_unix98_lookup kprobe
-    destroy_kprobe(&pts_kp);
-#endif
 }
 
 // sucompat: permited process can execute 'su' to gain root access.

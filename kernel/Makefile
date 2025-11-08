@@ -11,6 +11,7 @@ kernelsu-objs += ksud.o
 kernelsu-objs += embed_ksud.o
 kernelsu-objs += kernel_compat.o
 kernelsu-objs += throne_tracker.o
+kernelsu-objs += file_proxy.o
 kernelsu-objs += throne_comm.o
 kernelsu-objs += sulog.o
 
@@ -115,14 +116,6 @@ ifeq ($(CONFIG_KPM), y)
 $(info -- KPM is enabled)
 else
 $(info -- KPM is disabled)
-endif
-
-# SELinux drivers check
-ifeq ($(shell grep -q "current_sid(void)" $(srctree)/security/selinux/include/objsec.h; echo $$?),0)
-ccflags-y += -DKSU_COMPAT_HAS_CURRENT_SID
-endif
-ifeq ($(shell grep -q "struct selinux_state " $(srctree)/security/selinux/include/security.h; echo $$?),0)
-ccflags-y += -DKSU_COMPAT_HAS_SELINUX_STATE
 endif
 
 # Handle optional backports

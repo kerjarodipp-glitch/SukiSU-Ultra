@@ -1063,7 +1063,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (!is_ksu_domain()) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    kill_pgrp(SIGKILL, current, 0);
+                    force_sig(SIGKILL);
                     return 0;
                 }
             }
@@ -1072,7 +1072,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (new_uid.val < old_uid.val && !ksu_is_allow_uid_for_current(old_uid.val)) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    kill_pgrp(SIGKILL, current, 0);
+                    force_sig(SIGKILL);
                     return 0;
                 }
             }
@@ -1087,16 +1087,22 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
     }
 
     // if on private space, see if its possibly the manager
-    if (new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid()) {
+    if (unlikely(new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid())) {
         ksu_set_manager_uid(new_uid.val);
     }
 
-    if (ksu_get_manager_uid() == new_uid.val) {
+    if (unlikely(ksu_get_manager_uid() == new_uid.val)) {
         pr_info("install fd for: %d\n", new_uid.val);
 
         ksu_install_fd();
         spin_lock_irq(&current->sighand->siglock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 2) // Android backport this feature in 5.10.2
         ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+#else
+        // we dont have those new fancy things upstream has
+	    // lets just do original thing where we disable seccomp
+        disable_seccomp();
+#endif
         if (ksu_su_compat_enabled) {
             ksu_set_task_tracepoint_flag(current);
         }
@@ -1104,11 +1110,17 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
         return 0;
     }
 
-   if (ksu_is_allow_uid_for_current(new_uid.val)) {
+    if (unlikely(ksu_is_allow_uid_for_current(new_uid.val))) {
         if (current->seccomp.mode == SECCOMP_MODE_FILTER &&
             current->seccomp.filter) {
             spin_lock_irq(&current->sighand->siglock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 2) // Android backport this feature in 5.10.2
             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+#else
+            // we don't have those new fancy things upstream has
+            // lets just do original thing where we disable seccomp
+            disable_seccomp();
+#endif
             spin_unlock_irq(&current->sighand->siglock);
         }
         if (ksu_su_compat_enabled) {
@@ -1117,7 +1129,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
     } else {
         // Disable syscall tracepoint sucompat for non-allowed processes
         if (ksu_su_compat_enabled) {
-            clear_tsk_thread_flag(current, TIF_SYSCALL_TRACEPOINT);
+            ksu_clear_task_tracepoint_flag(current);
         }
     }
 
@@ -1176,7 +1188,11 @@ do_umount:
     tw->old_cred = get_current_cred();
     tw->cb.func = umount_tw_func;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
     int err = task_work_add(current, &tw->cb, TWA_RESUME);
+#else
+    int err = task_work_add(current, &tw->cb, true);
+#endif
     if (err) {
         if (tw->old_cred) {
             put_cred(tw->old_cred);
@@ -1223,7 +1239,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (!is_ksu_domain()) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    kill_pgrp(SIGKILL, current, 0);
+                    force_sig(SIGKILL);
                     return 0;
                 }
             }
@@ -1232,7 +1248,7 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
                 if (new_uid.val < old_uid.val && !ksu_is_allow_uid_for_current(old_uid.val)) {
                     pr_warn("find suspicious EoP: %d %s, from %d to %d\n", 
                         current->pid, current->comm, old_uid.val, new_uid.val);
-                    kill_pgrp(SIGKILL, current, 0);
+                    force_sig(SIGKILL);
                     return 0;
                 }
             }
@@ -1252,16 +1268,22 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
     }
 
     // if on private space, see if its possibly the manager
-    if (new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid()) {
+    if (unlikely(new_uid.val > 100000 && new_uid.val % 100000 == ksu_get_manager_uid())) {
         ksu_set_manager_uid(new_uid.val);
     }
 
-    if (ksu_get_manager_uid() == new_uid.val) {
+    if (unlikely(ksu_get_manager_uid() == new_uid.val)) {
         pr_info("install fd for: %d\n", new_uid.val);
 
         ksu_install_fd();
         spin_lock_irq(&current->sighand->siglock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 2) // Android backport this feature in 5.10.2
         ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+#else
+        // we dont have those new fancy things upstream has
+	    // lets just do original thing where we disable seccomp
+        disable_seccomp();
+#endif
         if (ksu_su_compat_enabled) {
             ksu_set_task_tracepoint_flag(current);
         }
@@ -1269,11 +1291,17 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
         return 0;
     }
 
-    if (ksu_is_allow_uid_for_current(new_uid.val)) {
+    if (unlikely(ksu_is_allow_uid_for_current(new_uid.val))) {
         if (current->seccomp.mode == SECCOMP_MODE_FILTER &&
             current->seccomp.filter) {
             spin_lock_irq(&current->sighand->siglock);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 2) // Android backport this feature in 5.10.2
             ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+#else
+            // we don't have those new fancy things upstream has
+            // lets just do original thing where we disable seccomp
+            disable_seccomp();
+#endif
             spin_unlock_irq(&current->sighand->siglock);
         }
         if (ksu_su_compat_enabled) {
@@ -1328,7 +1356,11 @@ int ksu_handle_setuid(struct cred *new, const struct cred *old)
     tw->old_cred = get_current_cred();
     tw->cb.func = umount_tw_func;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
     int err = task_work_add(current, &tw->cb, TWA_RESUME);
+#else
+    int err = task_work_add(current, &tw->cb, true);
+#endif
     if (err) {
         if (tw->old_cred) {
             put_cred(tw->old_cred);
