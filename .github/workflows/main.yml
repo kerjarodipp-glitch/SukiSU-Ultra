@@ -1,4 +1,4 @@
-name: Apply file_proxy.c Patch (KernelSU)
+name: Apply KernelSU Patch
 
 on:
   workflow_dispatch:
@@ -10,61 +10,20 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repo
+      - name: Checkout source kernel
         uses: actions/checkout@v4
         with:
-          ref: susfs-main
+          ref: susfs-main  # ganti sesuai branch target kamu
 
-      - name: Apply file_proxy.c patch
+      - name: Apply KernelSU file_proxy patch
         run: |
-          echo "Applying manual fix to kernel/file_proxy.c..."
-          FILE=kernel/file_proxy.c
-
-          if [ -f "$FILE" ]; then
-            sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)/,/^#endif/ c\
-            /* Patched KernelSU file_proxy compatibility */\
-            #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)\
-            static loff_t ksu_file_proxy_remap_file_range(struct file *file_in, loff_t pos_in,\
-            struct file *file_out, loff_t pos_out, loff_t len, unsigned int remap_flags)\
-            {\
-            struct ksu_file_proxy *data = file_in->private_data;\
-            struct file *orig = data->orig;\
-            if (orig->f_op->remap_file_range)\
-            return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\
-           if (orig->f_op->copy_file_range)\
-           return orig->f_op->copy_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\
-           return -EINVAL;\
-           }\
-           #else\
-           static int ksu_file_proxy_clone_file_range(struct file *file_in, loff_t pos_in,\
-           struct file *file_out, loff_t pos_out, u64 len)\
-           {\
-           struct ksu_file_proxy *data = file_in->private_data;\
-           struct file *orig = data->orig;\
-           if (orig->f_op->clone_file_range)\
-           return orig->f_op->clone_file_range(orig, pos_in, file_out, pos_out, len);\
-           return -EINVAL;\
-           }\
-           \
-           static ssize_t ksu_file_proxy_dedupe_file_range(struct file *src_file, u64 loff,\
-           u64 len, struct file *dst_file, u64 dst_loff)\
-           {\
-           struct ksu_file_proxy *data = src_file->private_data;\
-           struct file *orig = data->orig;\
-           if (orig->f_op->dedupe_file_range)\
-           return orig->f_op->dedupe_file_range(orig, loff, len, dst_file, dst_loff);\
-           return -EINVAL;\
-           }\
-           #endif' "$FILE"
-          else
-            echo "❌ File $FILE not found!"
-            exit 1
-          fi
+          echo "Applying KernelSU file_proxy.c fix patch..."
+          git apply kernelsu-file_proxy-fix.patch || (echo "Patch failed!" && exit 1)
 
       - name: Commit and push patch
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add kernel/file_proxy.c
-          git commit -m "fix: patch kernel/file_proxy.c for KernelSU compatibility" || echo "No changes to commit"
+          git add drivers/kernelsu/file_proxy.c
+          git commit -m "fix(kernelsu): apply file_proxy compatibility patch"
           git push origin susfs-main
