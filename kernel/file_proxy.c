@@ -1,5 +1,6 @@
 #include <linux/fs.h>
 #include <linux/version.h>
+#include <linux/slab.h>   // ✅ tambahkan ini
 #include "file_proxy.h"
 
 /*
@@ -54,7 +55,7 @@ struct ksu_file_proxy *ksu_create_file_proxy(struct file *fp)
 {
     struct ksu_file_proxy *proxy;
 
-    proxy = kzalloc(sizeof(*proxy), GFP_KERNEL);
+    proxy = kzalloc(sizeof(*proxy), GFP_KERNEL); // ✅ sudah dikenali setelah include <linux/slab.h>
     if (!proxy)
         return NULL;
 
