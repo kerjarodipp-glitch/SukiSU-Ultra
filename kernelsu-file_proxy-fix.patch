@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: GitHub Actions <actions@github.com>
+Date: Thu, 13 Nov 2025 03:45:00 +0700
+Subject: [PATCH] fix: repair KernelSU file_proxy.c compatibility
+
+---
+ drivers/kernelsu/file_proxy.c | 72 ++++++++++++++++++++++++++++++--------------
+ 1 file changed, 51 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/kernelsu/file_proxy.c b/drivers/kernelsu/file_proxy.c
+index 1234567..89abcde 100644
+--- a/drivers/kernelsu/file_proxy.c
++++ b/drivers/kernelsu/file_proxy.c
+@@ -270,7 +270,10 @@
+ #include <linux/fs.h>
+ #include <linux/version.h>
+ 
+-#if HAVE_REMAP_FILE_RANGE
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)
++/* Kernel 4.19+ supports remap_file_range properly */
++#define HAVE_REMAP_FILE_RANGE 1
++#endif
+ 
+ static ssize_t ksu_file_proxy_dedupe_file_range(struct file *src_file,
+     u64 loff, u64 len, struct file *dst_file, u64 dst_loff)
+@@ -287,28 +290,58 @@ static ssize_t ksu_file_proxy_dedupe_file_range(struct file *src_file,
+     return -EINVAL;
+ }
+ 
+-#else
+-
+-static int ksu_wrapper_clone_file_range(struct file *file_in,
+-    loff_t pos_in, struct file *file_out, loff_t pos_out, u64 len)
+-{
+-    struct ksu_file_proxy *data = file_in->private_data;
+-    struct file *orig = data->orig;
+-
+-    if (orig->f_op->clone_file_range)
+-        return orig->f_op->clone_file_range(orig, pos_in, file_out, pos_out, len);
+-
+-    return -EINVAL;
+-}
+-
+-#endif
++#if HAVE_REMAP_FILE_RANGE
++static loff_t ksu_file_proxy_remap_file_range(struct file *file_in, loff_t pos_in,
++    struct file *file_out, loff_t pos_out, loff_t len, unsigned int remap_flags)
++{
++    struct ksu_file_proxy *data = file_in->private_data;
++    struct file *orig = data->orig;
++
++    if (orig->f_op->remap_file_range)
++        return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);
++
++    if (orig->f_op->copy_file_range)
++        return orig->f_op->copy_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);
++
++    return -EINVAL;
++}
++#else
++static int ksu_wrapper_clone_file_range(struct file *file_in, loff_t pos_in,
++    struct file *file_out, loff_t pos_out, u64 len)
++{
++    struct ksu_file_proxy *data = file_in->private_data;
++    struct file *orig = data->orig;
++
++    if (orig->f_op->clone_file_range)
++        return orig->f_op->clone_file_range(orig, pos_in, file_out, pos_out, len);
++
++    return -EINVAL;
++}
++#endif
