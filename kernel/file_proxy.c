@@ -253,18 +253,33 @@ static ssize_t ksu_file_proxy_copy_file_range(struct file *f1, loff_t off1, stru
 	return -EINVAL;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 static loff_t ksu_file_proxy_remap_file_range(struct file *file_in, loff_t pos_in,
-				struct file *file_out, loff_t pos_out,
-				loff_t len, unsigned int remap_flags) {
-	// TODO: determine which file to use
-	struct ksu_file_proxy* data = file_in->private_data;
-	struct file* orig = data->orig;
-	if (orig->f_op->remap_file_range) {
-		return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);
-	}
-	return -EINVAL;
+    struct file *file_out, loff_t pos_out, loff_t len, unsigned int remap_flags) {
+    struct ksu_file_proxy* data = file_in->private_data;
+    struct file* orig = data->orig;
+#if defined(CONFIG_HAVE_REMAP_FILE_RANGE)
+    if (orig->f_op->remap_file_range) {
+        return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);
+    }
+#else
+    if (orig->f_op->copy_file_range) {
+        return orig->f_op->copy_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);
+    }
+#endif
+    return -EINVAL;
 }
+#else
+/* fallback untuk kernel ≥ 4.19 — gunakan clone/dedupe_file_range */
+static int ksu_wrapper_clone_file_range(struct file *file_in, loff_t pos_in,
+    struct file *file_out, loff_t pos_out, u64 len) {
+    struct ksu_file_proxy* data = file_in->private_data;
+    struct file* orig = data->orig;
+    if (orig->f_op->clone_file_range)
+        return orig->f_op->clone_file_range(orig, pos_in, file_out, pos_out, len);
+    return -EINVAL;
+}
+#endif
 
 static int ksu_file_proxy_fadvise(struct file *fp, loff_t off1, loff_t off2, int flags) {
 	struct ksu_file_proxy* data = fp->private_data;
@@ -353,7 +368,11 @@ struct ksu_file_proxy* ksu_create_file_proxy(struct file* fp) {
 	p->ops.show_fdinfo = fp->f_op->show_fdinfo ? ksu_file_proxy_show_fdinfo : NULL;
 	p->ops.copy_file_range = fp->f_op->copy_file_range ? ksu_file_proxy_copy_file_range : NULL;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
-	p->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_file_proxy_remap_file_range : NULL;
+	#if HAVE_REMAP_FILE_RANGE
+p->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_file_proxy_remap_file_range : NULL;
+#else
+p->ops.copy_file_range = fp->f_op->copy_file_range ? ksu_file_proxy_remap_file_range : NULL;
+#endif
 	p->ops.fadvise = fp->f_op->fadvise ? ksu_file_proxy_fadvise : NULL;
 #else
 	p->ops.clone_file_range = fp->f_op->clone_file_range ? ksu_wrapper_clone_file_range : NULL;
