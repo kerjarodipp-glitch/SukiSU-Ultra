@@ -50,15 +50,24 @@ static ssize_t ksu_file_proxy_dedupe_file_range(struct file *src_file, u64 loff,
 #endif
 
 /* --- Restore missing KernelSU symbols --- */
-int ksu_create_file_proxy(struct file *file)
+struct ksu_file_proxy *ksu_create_file_proxy(struct file *fp)
 {
-    /* TODO: implement full proxy init if needed */
-    pr_info("KernelSU: stub ksu_create_file_proxy called for %p\n", file);
-    return 0;
+    struct ksu_file_proxy *proxy;
+
+    proxy = kzalloc(sizeof(*proxy), GFP_KERNEL);
+    if (!proxy)
+        return NULL;
+
+    proxy->orig = fp;
+    pr_info("KernelSU: stub ksu_create_file_proxy called for %p\n", fp);
+    return proxy;
 }
 
-void ksu_delete_file_proxy(struct file *file)
+void ksu_delete_file_proxy(struct ksu_file_proxy *data)
 {
-    /* TODO: implement cleanup if needed */
-    pr_info("KernelSU: stub ksu_delete_file_proxy called for %p\n", file);
+    if (!data)
+        return;
+
+    pr_info("KernelSU: stub ksu_delete_file_proxy called for %p\n", data->orig);
+    kfree(data);
 }
