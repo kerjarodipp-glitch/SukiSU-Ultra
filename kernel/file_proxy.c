@@ -48,3 +48,18 @@ return -EINVAL;
 #endif
 
 /* Other original KernelSU logic continues here... */
+/* --- Restore missing KernelSU symbols --- */
+#include "file_proxy.h"
+
+int ksu_create_file_proxy(struct file *file)
+{
+    /* TODO: implement full proxy init if needed */
+    pr_info("KernelSU: stub ksu_create_file_proxy called for %p\n", file);
+    return 0;
+}
+
+void ksu_delete_file_proxy(struct file *file)
+{
+    /* TODO: implement cleanup if needed */
+    pr_info("KernelSU: stub ksu_delete_file_proxy called for %p\n", file);
+}
